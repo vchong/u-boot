@@ -276,6 +276,26 @@ __weak efi_status_t platform_get_tpm2_device(struct udevice **dev)
 	return EFI_NOT_FOUND;
 }
 
+__weak efi_status_t platform_get_eventlog(struct udevice *dev, u64 *addr, u32 *sz)
+{
+	const u64 *basep;
+	const u32 *sizep;
+
+	basep = dev_read_prop(dev, "tpm_event_log_addr", NULL);
+	if (!basep)
+		return EFI_NOT_FOUND;
+
+	*addr = be64_to_cpup((__force __be64 *)basep);;
+
+	sizep = dev_read_prop(dev, "tpm_event_log_size", NULL);
+	if (!sizep)
+		return EFI_NOT_FOUND;
+
+	*sz = be32_to_cpup((__force __be32 *)sizep);;
+
+	return EFI_SUCCESS;
+}
+
 /**
  * tpm2_get_max_command_size() - get the supported max command size
  *
@@ -1241,16 +1261,17 @@ out:
 /**
  * efi_init_event_log() - initialize an eventlog
  */
-static efi_status_t efi_init_event_log(void)
+static efi_status_t efi_init_event_log(struct udevice *dev)
 {
 	/*
 	 * vendor_info_size is currently set to 0, we need to change the length
 	 * and allocate the flexible array member if this changes
 	 */
 	struct tcg_pcr_event *event_header = NULL;
-	struct udevice *dev;
 	size_t spec_event_size;
 	efi_status_t ret;
+	u64 base;
+	u32 sz;
 
 	ret = platform_get_tpm2_device(&dev);
 	if (ret != EFI_SUCCESS)
@@ -1266,26 +1287,40 @@ static efi_status_t efi_init_event_log(void)
 	 * last log entry
 	 */
 	memset(event_log.buffer, 0xff, TPM2_EVENT_LOG_SIZE);
-	event_log.pos = 0;
-	event_log.last_event_size = 0;
-	event_log.get_event_called = false;
-	event_log.truncated = false;
 
 	/*
 	 * The log header is defined to be in SHA1 event log entry format.
 	 * Setup event header
 	 */
 	event_header =  (struct tcg_pcr_event *)event_log.buffer;
-	put_unaligned_le32(0, &event_header->pcr_index);
-	put_unaligned_le32(EV_NO_ACTION, &event_header->event_type);
-	memset(&event_header->digest, 0, sizeof(event_header->digest));
-	ret = create_specid_event(dev, (void *)((uintptr_t)event_log.buffer + sizeof(*event_header)),
+	event_log.pos = 0;
+	event_log.last_event_size = 0;
+	event_log.get_event_called = false;
+	event_log.truncated = false;
+
+	/* Check if eventlog is passed by earlier firmware in device tree */
+	ret = platform_get_eventlog(dev, &base, &sz);
+	if (ret == EFI_NOT_FOUND) {
+		put_unaligned_le32(0, &event_header->pcr_index);
+		put_unaligned_le32(EV_NO_ACTION, &event_header->event_type);
+		memset(&event_header->digest, 0, sizeof(event_header->digest));
+		ret = create_specid_event(dev, (void *)((uintptr_t)event_log.buffer + sizeof(*event_header)),
 				  &spec_event_size);
-	if (ret != EFI_SUCCESS)
-		goto free_pool;
-	put_unaligned_le32(spec_event_size, &event_header->event_size);
-	event_log.pos = spec_event_size + sizeof(*event_header);
-	event_log.last_event_size = event_log.pos;
+		if (ret != EFI_SUCCESS)
+			goto free_pool;
+		put_unaligned_le32(spec_event_size, &event_header->event_size);
+		event_log.pos = spec_event_size + sizeof(*event_header);
+		event_log.last_event_size = event_log.pos;
+	} else {
+		/*
+		 * FIXME - Parse to check of log buffer is valid before copying
+		 * Another addition would be to check if PCR's are populated
+		 * by earler firmware with the content of event log. If not,
+		 * add code to extend it here.
+		 */
+		memcpy(event_log.buffer, base, sz);
+		event_log.pos = sz;
+	}
 
 	ret = create_final_event();
 	if (ret != EFI_SUCCESS)
@@ -1663,7 +1698,7 @@ efi_status_t efi_tcg2_register(void)
 		return EFI_SUCCESS;
 	}
 
-	ret = efi_init_event_log();
+	ret = efi_init_event_log(dev);
 	if (ret != EFI_SUCCESS)
 		goto fail;
 
