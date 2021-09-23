@@ -1128,6 +1128,185 @@ static const struct efi_tcg2_protocol efi_tcg2_protocol = {
 };
 
 /**
+ * check_event_log_header() -  Parse and verify the event log header fields
+ *
+ * @buffer:			Pointer to the event header
+ *
+ * Return:	status code
+ */
+efi_status_t check_event_log_header(void *buffer, u32 *pos)
+{
+	struct tcg_pcr_event *event_header = (struct tcg_pcr_event *)buffer;
+	int i = 0;
+
+	if (get_unaligned_le32(&event_header->pcr_index) != 0 ||
+	    get_unaligned_le32(&event_header->event_type) != EV_NO_ACTION)
+		return EFI_INVALID_PARAMETER;
+
+	for (i = 0; i < sizeof(event_header->digest); i++) {
+		if (event_header->digest[i] != 0)
+			return EFI_INVALID_PARAMETER;
+	}
+
+	*pos += sizeof(*event_header);
+
+	return EFI_SUCCESS;
+}
+
+efi_status_t parse_spec_event(struct udevice *dev, void *buffer, u32 log_size,
+			      u32 *pos, struct tpml_digest_values *digest_list)
+{
+	struct tcg_efi_spec_id_event *spec_event;
+	struct tcg_pcr_event *event_header = (struct tcg_pcr_event *)buffer;
+	size_t spec_event_size;
+	u32 active = 0, supported = 0, pcr_count = 0, alg_count = 0;
+	u32 spec_active = 0;
+	u16 hash_alg, hash_sz;
+	u8 vendor_sz;
+	int err, i;
+
+	/* Check specID event data */
+	spec_event = (struct tcg_efi_spec_id_event *)((uintptr_t)buffer + *pos);
+	/* Check for signature */
+	if (memcmp(spec_event->signature, TCG_EFI_SPEC_ID_EVENT_SIGNATURE_03,
+		   sizeof(TCG_EFI_SPEC_ID_EVENT_SIGNATURE_03))) {
+		printf("Spec ID Event: Signature mismatch\n");
+		return EFI_INVALID_PARAMETER;
+	}
+
+	/* TBD - should we check platform_class, spec version etc. Skipping for now */
+
+	if (spec_event->number_of_algorithms > MAX_HASH_COUNT ||
+	    spec_event->number_of_algorithms < 1) {
+		printf("Spec ID Event: Number of algorithms incorrect\n");
+		return EFI_INVALID_PARAMETER;
+	}
+
+	alg_count = spec_event->number_of_algorithms;
+
+	err = tpm2_get_pcr_info(dev, &supported, &active, &pcr_count);
+	if (err)
+		return EFI_DEVICE_ERROR;
+
+	digest_list->count = 0;
+	/*
+	 * We may need to worry about the order of algs in this structure as
+	 * subsequent entries in event should be in same order
+	 */
+	for (i = 0; i < alg_count; i++) {
+		hash_alg = get_unaligned_le16(
+				&spec_event->digest_sizes[i].algorithm_id);
+		hash_sz = get_unaligned_le16(
+				&spec_event->digest_sizes[i].digest_size);
+
+		if (!(supported & alg_to_mask(hash_alg))) {
+			printf("Spec ID Event: Unsupported algorithm\n");
+			return EFI_INVALID_PARAMETER;
+		}
+		digest_list->digests[digest_list->count++].hash_alg = hash_alg;
+
+		spec_active |= alg_to_mask(hash_alg);
+	}
+
+	/* TCG spec expects the event log to have hashes for all active PCR's */
+	if (spec_active != active) {
+		printf("Spec ID Event: All active hash alg not present\n");
+		/*
+		 * Right way to handle this should be to call SetActive PCR's
+		 * and issue reset
+		 */
+		return EFI_INVALID_PARAMETER;
+	}
+
+	/*
+	 * the size of the spec event and placement of vendor_info_size
+	 * depends on supported algoriths
+	 */
+	spec_event_size =
+		offsetof(struct tcg_efi_spec_id_event, digest_sizes) +
+		spec_event->number_of_algorithms * sizeof(spec_event->digest_sizes[0]);
+
+	vendor_sz = *(uint8_t *)((uintptr_t)buffer + *pos + spec_event_size);
+
+	spec_event_size += sizeof(vendor_sz) + vendor_sz;
+	*pos += spec_event_size; 
+
+	if(get_unaligned_le32(&event_header->event_size) != spec_event_size) {
+		printf("Spec ID event: header event size mismatch\n");
+		/* Right way to handle this can be to call SetActive PCR's */
+		return EFI_INVALID_PARAMETER;
+	}
+
+	return EFI_SUCCESS;
+}
+
+efi_status_t tcg2_parse_event(struct udevice *dev, void *buffer, u32 log_size,
+			      u32 *offset, struct tpml_digest_values *digest_list,
+			      u32 *pcr)
+{
+	struct tcg_pcr_event2 *event = NULL;
+	u32 event_type, count, size, event_size;
+	size_t pos;
+
+	if (*offset > log_size)
+		return EFI_INVALID_PARAMETER;
+
+	event = (struct tcg_pcr_event2 *)((uintptr_t)buffer + *offset);
+
+	*pcr = get_unaligned_le32(&event->pcr_index);
+
+	event_size = tcg_event_final_size(digest_list);
+
+	if (*offset + event_size > log_size) {
+		printf("Event exceeds log size\n");
+		return EFI_INVALID_PARAMETER;
+	}
+
+	event_type = get_unaligned_le32(&event->event_type);
+
+	/* get the count */
+	count = get_unaligned_le32(&event->digests.count);
+	if (count != digest_list->count) {
+		printf("Digest count doesn't match with count in spec ID event %d != %d\n", count, digest_list->count);
+		return EFI_INVALID_PARAMETER;
+	}
+
+	pos = offsetof(struct tcg_pcr_event2, digests); /* count */
+	pos += offsetof(struct tpml_digest_values, digests);
+
+	for (int i = 0; i < digest_list->count; i++) {
+		u16 alg;
+		u16 hash_alg = digest_list->digests[i].hash_alg;
+		u8 *digest = (u8 *)&digest_list->digests[i].digest;
+
+		alg = get_unaligned_le16((void *)((uintptr_t)event + pos));
+
+		if (alg != hash_alg)
+			return EFI_INVALID_PARAMETER;
+
+		pos += offsetof(struct tpmt_ha, digest);
+		memcpy(digest, (void *)((uintptr_t)event + pos), alg_to_len(hash_alg));
+		pos += alg_to_len(hash_alg);
+	}
+
+	size = get_unaligned_le32((void *)((uintptr_t)event + pos));
+	event_size += size;
+	pos += sizeof(u32); /* tcg_pcr_event2 event_size*/
+	pos += size;
+
+	/* make sure the calculated buffer is what we checked against */
+	if (pos != event_size)
+		return EFI_INVALID_PARAMETER;
+
+	if (pos > log_size)
+		return EFI_INVALID_PARAMETER;
+
+	*offset += pos;
+
+	return EFI_SUCCESS;
+}
+
+/**
  * create_specid_event() - Create the first event in the eventlog
  *
  * @dev:			tpm device
@@ -1268,8 +1447,11 @@ static efi_status_t efi_init_event_log(struct udevice *dev)
 	 * and allocate the flexible array member if this changes
 	 */
 	struct tcg_pcr_event *event_header = NULL;
+	struct tpml_digest_values digest_list;
 	size_t spec_event_size;
+	int i;
 	efi_status_t ret;
+	u32 pcr, pos, last_event_sz;
 	u64 base;
 	u32 sz;
 
@@ -1300,26 +1482,71 @@ static efi_status_t efi_init_event_log(struct udevice *dev)
 
 	/* Check if eventlog is passed by earlier firmware in device tree */
 	ret = platform_get_eventlog(dev, &base, &sz);
+	if (ret == EFI_SUCCESS && sz < TPM2_EVENT_LOG_SIZE) {
+		void *buffer = (void *)base;
+		pos = 0;
+
+		/* Parse the eventlog to check for its validity */
+		ret = check_event_log_header(buffer, &pos);
+		if (ret || pos > sz) {
+			ret = EFI_NOT_FOUND;
+			goto create_header;
+		}
+
+		ret = parse_spec_event(dev, buffer, sz, &pos, &digest_list);
+		if (ret || pos > sz) {
+			printf("ERROR PARSING SPEC ID Event\n");
+			ret = EFI_NOT_FOUND;
+			goto create_header;
+		}
+
+		while (pos < sz) {
+			ret = tcg2_parse_event(dev, buffer, sz, &pos,
+					       &digest_list, &pcr);
+			if (ret) {
+				printf("ERROR PARSING Event in Log\n");
+				ret = EFI_NOT_FOUND;
+				goto create_header;
+			}
+
+			/*
+			 * Assuming PCR's have not been extended by earlier PCR,
+			 * extend the value in the PCR. We can do it in a CONFIG
+			 * flag for now. Another way can be to calculate the PCR
+			 * value, read the PCR and verify.
+			 */
+			ret = tcg2_pcr_extend(dev, pcr, &digest_list);
+			if (ret != EFI_SUCCESS) {
+				printf("Issue in extending PCR\n");
+				goto free_pool;
+			}
+
+			/* Clear the digest in the digest_list for next event */
+			for (i = 0; i < digest_list.count; i++) {
+				u16 hash_alg = digest_list.digests[i].hash_alg;
+				u8 *digest = (u8 *)&digest_list.digests[i].digest;
+
+				memset(digest, 0, alg_to_len(hash_alg));
+			}
+		}
+
+		memcpy(event_log.buffer, base, sz);
+		event_log.pos = sz;
+		ret = EFI_SUCCESS;
+	}
+
+create_header:
 	if (ret == EFI_NOT_FOUND) {
 		put_unaligned_le32(0, &event_header->pcr_index);
 		put_unaligned_le32(EV_NO_ACTION, &event_header->event_type);
 		memset(&event_header->digest, 0, sizeof(event_header->digest));
 		ret = create_specid_event(dev, (void *)((uintptr_t)event_log.buffer + sizeof(*event_header)),
-				  &spec_event_size);
+					  &spec_event_size);
 		if (ret != EFI_SUCCESS)
 			goto free_pool;
 		put_unaligned_le32(spec_event_size, &event_header->event_size);
 		event_log.pos = spec_event_size + sizeof(*event_header);
 		event_log.last_event_size = event_log.pos;
-	} else {
-		/*
-		 * FIXME - Parse to check of log buffer is valid before copying
-		 * Another addition would be to check if PCR's are populated
-		 * by earler firmware with the content of event log. If not,
-		 * add code to extend it here.
-		 */
-		memcpy(event_log.buffer, base, sz);
-		event_log.pos = sz;
 	}
 
 	ret = create_final_event();
