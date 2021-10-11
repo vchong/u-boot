@@ -364,4 +364,11 @@ config EFI_ESRT
 	help
 	  Enabling this option creates the ESRT UEFI system table.
 
+config EFI_FIRMWARE_EXTEND_PCR
+	bool "Extend PCR for the eventlog passed by the firmware"
+	default n
+	help
+	  Select the option to parse the evenlog passed by firmwares to U-Boot
+	  and extend the measurements in the PCRs.
+
 endif

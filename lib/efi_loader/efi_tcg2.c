@@ -1492,6 +1492,7 @@ static efi_status_t efi_init_event_log(struct udevice *dev)
 	u32 pcr, pos;
 	u64 base;
 	u32 sz;
+	int i;
 
 	ret = platform_get_tpm2_device(&dev);
 	if (ret != EFI_SUCCESS)
@@ -1544,6 +1545,24 @@ static efi_status_t efi_init_event_log(struct udevice *dev)
 			if (ret) {
 				log_err("Error parsing event\n");
 				goto free_pool;
+			}
+
+			if (IS_ENABLED(CONFIG_EFI_FIRMWARE_EXTEND_PCR)) {
+				ret = tcg2_pcr_extend(dev, pcr, &digest_list);
+				if (ret != EFI_SUCCESS) {
+					log_err("Error in extending PCR\n");
+					goto free_pool;
+				}
+
+				/* Clear the digest for next event */
+				for (i = 0; i < digest_list.count; i++) {
+					u16 hash_alg =
+						digest_list.digests[i].hash_alg;
+					u8 *digest =
+					   (u8 *)&digest_list.digests[i].digest;
+
+					memset(digest, 0, alg_to_len(hash_alg));
+				}
 			}
 		}
 
