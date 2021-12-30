@@ -25,6 +25,8 @@ int tpm_tis_get_desc(struct udevice *udev, char *buf, int size)
 {
 	struct tpm_chip *chip = dev_get_priv(udev);
 
+	log_err("%s\n", __func__);
+
 	if (size < 80)
 		return -ENOSPC;
 
@@ -48,6 +50,8 @@ static bool tpm_tis_check_locality(struct udevice *udev, int loc)
 	struct tpm_chip *chip = dev_get_priv(udev);
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 	u8 locality;
+
+	log_err("%s\n", __func__);
 
 	if (!phy_ops)
 		return false;
@@ -77,6 +81,8 @@ int tpm_tis_request_locality(struct udevice *udev, int loc)
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 	u8 buf = TPM_ACCESS_REQUEST_USE;
 	unsigned long start, stop;
+
+	log_err("%s\n", __func__);
 
 	if (!phy_ops)
 		return -1;
@@ -109,6 +115,8 @@ static int tpm_tis_status(struct udevice *udev, u8 *status)
 	struct tpm_chip *chip = dev_get_priv(udev);
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 
+	log_err("%s\n", __func__);
+
 	if (!phy_ops)
 		return -EINVAL;
 
@@ -140,6 +148,8 @@ int tpm_tis_release_locality(struct udevice *udev, int loc)
 	u8 buf = TPM_ACCESS_ACTIVE_LOCALITY;
 	int ret;
 
+	log_err("%s\n", __func__);
+
 	if (!phy_ops)
 		return -1;
 
@@ -170,6 +180,8 @@ static int tpm_tis_wait_for_stat(struct udevice *udev, u8 mask,
 	unsigned long stop = timeout;
 	int ret;
 
+	log_err("%s\n", __func__);
+
 	do {
 		mdelay(TPM_TIMEOUT_MS);
 		ret = tpm_tis_status(udev, status);
@@ -197,6 +209,8 @@ static int tpm_tis_get_burstcount(struct udevice *udev, size_t *burstcount)
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 	unsigned long start, stop;
 	u32 burst;
+
+	log_err("%s\n", __func__);
 
 	if (!phy_ops)
 		return -EINVAL;
@@ -236,6 +250,8 @@ static int tpm_tis_ready(struct udevice *udev)
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 	u8 data = TPM_STS_COMMAND_READY;
 
+	log_err("%s\n", __func__);
+
 	if (!phy_ops)
 		return -1;
 
@@ -260,6 +276,8 @@ int tpm_tis_send(struct udevice *udev, const u8 *buf, size_t len)
 	u8 data = TPM_STS_GO;
 	u8 status;
 	int ret;
+
+	log_err("%s\n", __func__);
 
 	if (!phy_ops)
 		return -EINVAL;
@@ -359,6 +377,8 @@ static int tpm_tis_recv_data(struct udevice *udev, u8 *buf, size_t count)
 	size_t burstcnt;
 	u8 status;
 
+	log_err("%s\n", __func__);
+
 	if (!phy_ops)
 		return -EINVAL;
 
@@ -395,6 +415,8 @@ int tpm_tis_recv(struct udevice *udev, u8 *buf, size_t count)
 	struct tpm_chip *chip = dev_get_priv(udev);
 	int ret;
 	int size, expected;
+
+	log_err("%s\n", __func__);
 
 	if (!chip)
 		return -ENODEV;
@@ -445,6 +467,8 @@ int tpm_tis_cleanup(struct udevice *udev)
 {
 	struct tpm_chip *chip = dev_get_priv(udev);
 
+	log_err("%s\n", __func__);
+
 	tpm_tis_ready(udev);
 	tpm_tis_release_locality(udev, chip->locality);
 
@@ -462,6 +486,8 @@ int tpm_tis_open(struct udevice *udev)
 {
 	struct tpm_chip *chip = dev_get_priv(udev);
 	int ret;
+
+	log_err("%s\n", __func__);
 
 	if (chip->is_open)
 		return -EBUSY;
@@ -483,6 +509,8 @@ void tpm_tis_ops_register(struct udevice *udev, struct tpm_tis_phy_ops *ops)
 {
 	struct tpm_chip *chip = dev_get_priv(udev);
 
+	log_err("%s\n", __func__);
+
 	chip->phy_ops = ops;
 }
 
@@ -499,6 +527,8 @@ int tpm_tis_init(struct udevice *udev)
 	struct tpm_tis_phy_ops *phy_ops = chip->phy_ops;
 	int ret;
 	u32 tmp;
+
+	log_err("%s\n", __func__);
 
 	if (!phy_ops)
 		return -1;
@@ -535,6 +565,8 @@ int tpm_tis_close(struct udevice *udev)
 {
 	struct tpm_chip *chip = dev_get_priv(udev);
 	int ret = 0;
+
+	log_err("%s\n", __func__);
 
 	if (chip->is_open) {
 		ret = tpm_tis_release_locality(udev, chip->locality);

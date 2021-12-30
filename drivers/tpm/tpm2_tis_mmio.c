@@ -31,6 +31,8 @@ static int mmio_read_bytes(struct udevice *udev, u32 addr, u16 len,
 {
 	struct tpm_tis_chip_data *drv_data = (void *)dev_get_driver_data(udev);
 
+	log_err("%s\n", __func__);
+
 	while (len--)
 		*result++ = ioread8(drv_data->iobase + addr);
 	return 0;
@@ -41,6 +43,8 @@ static int mmio_write_bytes(struct udevice *udev, u32 addr, u16 len,
 {
 	struct tpm_tis_chip_data *drv_data = (void *)dev_get_driver_data(udev);
 
+	log_err("%s\n", __func__);
+
 	while (len--)
 		iowrite8(*value++, drv_data->iobase + addr);
 	return 0;
@@ -49,6 +53,8 @@ static int mmio_write_bytes(struct udevice *udev, u32 addr, u16 len,
 static int mmio_read16(struct udevice *udev, u32 addr, u16 *result)
 {
 	struct tpm_tis_chip_data *drv_data = (void *)dev_get_driver_data(udev);
+
+	log_err("%s\n", __func__);
 
 	*result = ioread16(drv_data->iobase + addr);
 	return 0;
@@ -65,6 +71,8 @@ static int mmio_read32(struct udevice *udev, u32 addr, u32 *result)
 static int mmio_write32(struct udevice *udev, u32 addr, u32 value)
 {
 	struct tpm_tis_chip_data *drv_data = (void *)dev_get_driver_data(udev);
+
+	log_err("%s\n", __func__);
 
 	iowrite32(value, drv_data->iobase + addr);
 	return 0;
@@ -85,6 +93,8 @@ static int tpm_tis_probe(struct udevice *udev)
 	int ret = 0;
 	fdt_addr_t ioaddr;
 	u64 sz;
+
+	log_err("%s\n", __func__);
 
 	ioaddr = dev_read_addr(udev);
 	if (ioaddr == FDT_ADDR_T_NONE)
@@ -118,6 +128,8 @@ iounmap:
 static int tpm_tis_remove(struct udevice *udev)
 {
 	struct tpm_tis_chip_data *drv_data = (void *)dev_get_driver_data(udev);
+
+	log_err("%s\n", __func__);
 
 	iounmap(drv_data->iobase);
 	return tpm_tis_cleanup(udev);
