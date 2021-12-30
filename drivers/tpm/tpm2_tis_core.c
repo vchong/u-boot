@@ -93,14 +93,14 @@ int tpm_tis_request_locality(struct udevice *udev, int loc)
 	phy_ops->write_bytes(udev, TPM_ACCESS(loc), 1, &buf);
 	start = get_timer(0);
 	stop = chip->timeout_a;
-	log_err("start = %lu, stop = %lu", start, stop);
+	log_err("start = %lu, stop = %lu\n", start, stop);
 	do {
 		if (tpm_tis_check_locality(udev, loc))
 			return 0;
 		mdelay(TPM_TIMEOUT_MS);
 	} while (get_timer(start) < stop);
 
-	log_err("timeout start = %lu ms", start);
+	log_err("timeout start = %lu ms\n", start);
 	return -1;
 }
 
