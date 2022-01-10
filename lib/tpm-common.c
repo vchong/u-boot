@@ -181,10 +181,10 @@ u32 tpm_sendrecv_command(struct udevice *dev, const void *command,
 	if (size > COMMAND_BUFFER_SIZE)
 		return log_msg_ret("size", -E2BIG);
 
-	log_debug("TPM request [size:%d]: ", size);
+	printf("TPM request [size:%d]: ", size);
 	for (i = 0; i < size; i++)
-		log_debug("%02x ", ((u8 *)command)[i]);
-	log_debug("\n");
+		printf("%02x ", ((u8 *)command)[i]);
+	printf("\n");
 
 	err = tpm_xfer(dev, command, size, response, &response_length);
 
@@ -196,10 +196,10 @@ u32 tpm_sendrecv_command(struct udevice *dev, const void *command,
 
 	ret = tpm_return_code(response);
 
-	log_debug("TPM response [ret:%d]: ", ret);
+	printf("TPM response [ret:%d]: ", ret);
 	for (i = 0; i < response_length; i++)
-		log_debug("%02x ", ((u8 *)response)[i]);
-	log_debug("\n");
+		printf("%02x ", ((u8 *)response)[i]);
+	printf("\n");
 
 	return ret;
 }
